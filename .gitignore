@@ -1,0 +1,19 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+
+# SQLite DB
+backend/app.db
+
+# PDFs (if you store them)
+backend/uploads/
+
+# Node
+frontend/node_modules/
+frontend/build/
+frontend/.env
+
+# System
+.DS_Store
+Thumbs.db
