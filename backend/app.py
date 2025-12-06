@@ -244,6 +244,26 @@ def search_records():
     if not query:
         return jsonify({"error": "Query is required"}), 400
 
+    # ---------- 0) DIRECT PATIENT_ID SEARCH ----------
+    # Try exact match on patient_id first
+    direct_records = Record.query.filter(Record.patient_id == query).all()
+    if direct_records:
+        final_results = []
+        for rec in direct_records:
+            snippet = rec.full_text or ""
+            if len(snippet) > 300:
+                snippet = snippet[:300] + "..."
+
+            final_results.append({
+                "record_id": rec.id,
+                "patient_id": rec.patient_id,
+                "file_name": rec.file_name,
+                "snippet": snippet,
+            })
+
+        return jsonify({"results": final_results}), 200
+    # ---------- END DIRECT PATIENT_ID SEARCH ----------
+
     global vectorizer, chunk_vectors, embeddings_store
 
     # if nothing indexed yet
@@ -308,6 +328,7 @@ def search_records():
     except Exception as e:
         print("Error in search_records:", e)
         return jsonify({"error": "Internal server error"}), 500
+
 
 
 

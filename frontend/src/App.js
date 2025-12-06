@@ -316,8 +316,17 @@ function SearchPage({ token }) {
           placeholder="e.g. diabetic patient on metformin"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (!loadingSearch) {
+                handleSearch();
+              }
+            }
+          }}
           style={{ width: "400px", padding: "4px 8px" }}
         />
+
         <button
           onClick={handleSearch}
           style={{ marginLeft: "10px", padding: "6px 12px" }}
