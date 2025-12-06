@@ -84,7 +84,8 @@ def search_records():
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(force=True)
-    query = data.get("query", "").strip()
+    raw_query = data.get("query", "")
+    query = str(raw_query).strip()
 
     # pagination params
     page = int(data.get("page", 1))
@@ -97,16 +98,23 @@ def search_records():
     if not query:
         return jsonify({"error": "Query is required"}), 400
 
-    # ---------- 0) DIRECT PATIENT_ID SEARCH (exact, case-insensitive) ----------
-    patient_query = Record.query.filter(
-        Record.user_id == user.id,
-        func.lower(Record.patient_id) == query.lower()
-    )
+    # ---------- DEBUG ---------- 
+    all_recs = Record.query.filter_by(user_id=user.id).all()
+    print("DEBUG all patient_ids for user", user.id, "=>",
+          [r.patient_id for r in all_recs])
+    print("DEBUG raw_query:", raw_query, "type:", type(raw_query), "-> query:", repr(query))
 
-    total_direct = patient_query.count()
-    if total_direct > 0:
-        patient_records = (
-            patient_query
+    # ---------- 0) PURE PATIENT_ID SEARCH (digits only) ----------
+    # If the query is ONLY digits (like "1234", "43101"), treat it as an ID.
+    if query.isdigit():
+        print("DEBUG treating query as patient_id search")
+
+        id_q = Record.query.filter_by(user_id=user.id, patient_id=query)
+        total = id_q.count()
+        print("DEBUG patient_id exact matches:", total)
+
+        records_page = (
+            id_q
             .order_by(Record.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -114,7 +122,7 @@ def search_records():
         )
 
         final_results = []
-        for rec in patient_records:
+        for rec in records_page:
             snippet = rec.full_text or ""
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
@@ -128,21 +136,24 @@ def search_records():
 
         return jsonify({
             "results": final_results,
-            "total": total_direct,
+            "total": total,
             "page": page,
             "page_size": page_size,
         }), 200
 
     # ---------- 1) SEMANTIC (TF-IDF) SEARCH OVER TEXT ----------
     if ext.chunk_vectors is None or not embeddings_store:
-        return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
+        return jsonify({
+            "results": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size
+        }), 200
 
     try:
-        # vectorize query
         query_vec = vectorizer.transform([query])
         sims = cosine_similarity(query_vec, ext.chunk_vectors)[0]
 
-        # keep best chunk per record
         results_by_record = {}  # record_id -> {score, snippet}
 
         for idx, sim in enumerate(sims):
@@ -161,9 +172,13 @@ def search_records():
                 }
 
         if not results_by_record:
-            return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
+            return jsonify({
+                "results": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size
+            }), 200
 
-        # sort by score
         scored_list = sorted(
             results_by_record.values(),
             key=lambda x: x["score"],
@@ -175,7 +190,6 @@ def search_records():
         end = start + page_size
         page_items = scored_list[start:end]
 
-        # fetch only this user's records for those IDs
         record_ids = [item["record_id"] for item in page_items]
         records = Record.query.filter(
             Record.id.in_(record_ids),
@@ -210,6 +224,8 @@ def search_records():
     except Exception as e:
         print("Error in search_records:", e)
         return jsonify({"error": "Internal server error"}), 500
+
+
 
 
 # ---------- API: Get full record + summary ----------
