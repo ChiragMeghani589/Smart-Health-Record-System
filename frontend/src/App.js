@@ -259,11 +259,16 @@ function SearchPage({ token }) {
 
   const navigate = useNavigate();
 
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 5;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+
   const axiosConfig = {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   };
 
-  const handleSearch = async () => {
+  const handleSearch = async (newPage = 1) => {
     if (!query.trim()) {
       alert("Please enter a query");
       return;
@@ -271,9 +276,19 @@ function SearchPage({ token }) {
 
     try {
       setLoadingSearch(true);
-      const body = { query, top_k: 5 };
-      const res = await axios.post(`${API_BASE_URL}/search-records`, body, axiosConfig);
+
+      const body = { query, page: newPage, page_size: pageSize };
+
+      const res = await axios.post(
+        `${API_BASE_URL}/search-records`,
+        body,
+        axiosConfig
+      );
+
       setResults(res.data.results || []);
+      setTotal(res.data.total || 0);
+      setPage(newPage);
+
     } catch (err) {
       console.error(err);
       alert(err.response?.data?.error || "Search failed");
@@ -381,6 +396,28 @@ function SearchPage({ token }) {
           </div>
         ))}
       </div>
+
+      {total > 0 && (
+        <div style={{ marginTop: "20px" }}>
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <button
+            onClick={() => handleSearch(page - 1)}
+            disabled={page <= 1 || loadingSearch}
+            style={{ marginLeft: "10px", padding: "4px 10px" }}
+          >
+            Prev
+          </button>
+          <button
+            onClick={() => handleSearch(page + 1)}
+            disabled={page >= totalPages || loadingSearch}
+            style={{ marginLeft: "10px", padding: "4px 10px" }}
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       {/* Full Record Modal */}
       {selectedRecord && (

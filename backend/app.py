@@ -239,8 +239,16 @@ def search_records():
 
     data = request.get_json(force=True)
     query = data.get("query", "").strip()
-    top_k = int(data.get("top_k", 5))
 
+
+    page = int(data.get("page", 1))
+    page_size = int(data.get("page_size", 5))  # instead of top_k
+    if page < 1:
+        page = 1
+    if page_size < 1 or page_size > 50:
+        page_size = 5
+
+    
     if not query:
         return jsonify({"error": "Query is required"}), 400
 
@@ -268,7 +276,7 @@ def search_records():
 
     # if nothing indexed yet
     if vectorizer is None or chunk_vectors is None or not embeddings_store:
-        return jsonify({"results": []}), 200
+        return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
 
     try:
         # 1) vectorize query
@@ -297,19 +305,29 @@ def search_records():
 
         # 3) if nothing matched at all, return empty list
         if not results_by_record:
-            return jsonify({"results": []}), 200
+            return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
 
         # 4) sort by score and take top_k
         scored_list = sorted(
             results_by_record.values(),
             key=lambda x: x["score"],
             reverse=True
-        )[:top_k]
+        )
 
-        # 5) build final response
+        total = len(scored_list)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_items = scored_list[start:end]
+
+
         final_results = []
-        for item in scored_list:
-            rec = Record.query.get(item["record_id"])
+ 
+        record_ids = [item["record_id"] for item in page_items]
+        records = Record.query.filter(Record.id.in_(record_ids)).all()
+        records_by_id = {r.id: r for r in records}
+
+        for item in page_items:
+            rec = records_by_id.get(item["record_id"])
             if not rec:
                 continue
             snippet = item["snippet"]
@@ -323,7 +341,13 @@ def search_records():
                 "snippet": snippet,
             })
 
-        return jsonify({"results": final_results}), 200
+        return jsonify({
+            "results": final_results,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }), 200
+
 
     except Exception as e:
         print("Error in search_records:", e)
@@ -344,17 +368,14 @@ def get_record(record_id):
     if not rec:
         return jsonify({"error": "Record not found"}), 404
 
-    full_text = rec.full_text
-    summary = simple_summary(full_text)
-
     return jsonify({
         "record": {
             "id": rec.id,
             "patient_id": rec.patient_id,
             "file_name": rec.file_name,
             "created_at": rec.created_at.isoformat(),
-            "full_text": full_text,
-            "summary": summary
+            "full_text": rec.full_text,
+            "summary": rec.summary,  # precomputed
         }
     }), 200
 
