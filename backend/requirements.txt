@@ -1,7 +1,9 @@
 flask
 flask-cors
+flask-Limiter
 openai
 pypdf2
 numpy
 python-dotenv
 scikit-learn
+PyJWT

@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import func
 
 from PyPDF2 import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -19,8 +20,6 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-# In-memory "session" store: token -> user_id
-sessions = {}
 
 # TF-IDF based "vector store"
 vectorizer = TfidfVectorizer(stop_words="english")
@@ -38,6 +37,9 @@ class User(db.Model):
 
 class Record(db.Model):
     id = db.Column(db.String, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    user = db.relationship("User", backref="records")
+    
     patient_id = db.Column(db.String(50))
     file_name = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.now(timezone.utc))
@@ -109,21 +111,50 @@ def simple_summary(text: str, max_chars: int = 500) -> str:
 # ---------- Auth Helpers ----------
 
 def get_user_from_token(request):
-    """
-    Read token from Authorization header: 'Bearer <token>'
-    Return User or None.
-    """
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+
+    auth_header = request.headers.get("Authorization", "")
+    print("Auth header:", auth_header)
+
+    if not auth_header.startswith("Bearer "):
         return None
-    token = auth.split(" ", 1)[1].strip()
-    user_id = sessions.get(token)
+
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        print("Token expired")
+        return None
+    except jwt.InvalidTokenError:
+        print("Invalid token")
+        return None
+
+    user_id = payload.get("sub")
     if not user_id:
         return None
-    return User.query.get(user_id)
+
+    try:
+        user_id = int(user_id)   # 👈 convert back to int
+    except ValueError:
+        return None
+        
+    user = User.query.get(user_id)
+    return user
+
 
 
 # ---------- Auth Endpoints ----------
+
+from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
+from datetime import datetime, timedelta
+
+SECRET_KEY = "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET"   # store in env variable ideally
+JWT_ALGO = "HS256"
+JWT_EXP_MINUTES = 60  # token expires in 1 hour
+
 
 @app.route("/api/signup", methods=["POST"])
 def signup():
@@ -138,14 +169,21 @@ def signup():
     if existing:
         return jsonify({"error": "User already exists"}), 400
 
-    pwd_hash = generate_password_hash(password)
-    user = User(email=email, password_hash=pwd_hash)
+    user = User(
+        email=email,
+        password_hash=generate_password_hash(password)
+    )
     db.session.add(user)
     db.session.commit()
 
     return jsonify({"message": "Signup successful"}), 200
 
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
+limiter = Limiter(get_remote_address, app=app)
+
+@limiter.limit("5 per minute")
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(force=True)
@@ -156,8 +194,15 @@ def login():
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "Invalid email or password"}), 401
 
-    token = str(uuid.uuid4())
-    sessions[token] = user.id
+    # Generate JWT token
+    from datetime import datetime, timedelta, timezone
+    
+    payload = {
+        "sub": str(user.id),
+        "email": user.email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=JWT_EXP_MINUTES)
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGO)
 
     return jsonify({
         "message": "Login successful",
@@ -195,6 +240,7 @@ def upload_record():
         record_id = str(uuid.uuid4())
         record = Record(
             id=record_id,
+            user_id=user.id,
             patient_id=patient_id,
             file_name=file.filename,
             created_at=datetime.now(timezone.utc),
@@ -229,6 +275,7 @@ def upload_record():
 
 # ---------- API: Search records ----------
 
+from sqlalchemy import func
 from sklearn.metrics.pairwise import cosine_similarity
 
 @app.route("/api/search-records", methods=["POST"])
@@ -240,24 +287,38 @@ def search_records():
     data = request.get_json(force=True)
     query = data.get("query", "").strip()
 
-
+    # pagination params
     page = int(data.get("page", 1))
-    page_size = int(data.get("page_size", 5))  # instead of top_k
+    page_size = int(data.get("page_size", 5))
     if page < 1:
         page = 1
     if page_size < 1 or page_size > 50:
         page_size = 5
 
-    
     if not query:
         return jsonify({"error": "Query is required"}), 400
 
     # ---------- 0) DIRECT PATIENT_ID SEARCH ----------
-    # Try exact match on patient_id first
-    direct_records = Record.query.filter(Record.patient_id == query).all()
-    if direct_records:
+    # If user typed a patient ID, we look ONLY at the patient_id column.
+    # This does NOT depend on the PDF content at all.
+    patient_query = Record.query.filter(
+        Record.user_id == user.id,
+        func.lower(Record.patient_id) == query.lower()   # exact, case-insensitive match
+    )
+
+    total_direct = patient_query.count()
+    if total_direct > 0:
+        # apply pagination on patient-id results
+        patient_records = (
+            patient_query
+            .order_by(Record.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+
         final_results = []
-        for rec in direct_records:
+        for rec in patient_records:
             snippet = rec.full_text or ""
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
@@ -269,9 +330,15 @@ def search_records():
                 "snippet": snippet,
             })
 
-        return jsonify({"results": final_results}), 200
+        return jsonify({
+            "results": final_results,
+            "total": total_direct,
+            "page": page,
+            "page_size": page_size,
+        }), 200
     # ---------- END DIRECT PATIENT_ID SEARCH ----------
 
+    # ---------- 1) SEMANTIC (TF-IDF) SEARCH OVER TEXT ----------
     global vectorizer, chunk_vectors, embeddings_store
 
     # if nothing indexed yet
@@ -279,23 +346,21 @@ def search_records():
         return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
 
     try:
-        # 1) vectorize query
+        # vectorize query
         query_vec = vectorizer.transform([query])
         sims = cosine_similarity(query_vec, chunk_vectors)[0]
 
-        # 2) keep only chunks with similarity > 0
+        # keep best chunk per record
         results_by_record = {}  # record_id -> {score, snippet}
 
         for idx, sim in enumerate(sims):
             sim = float(sim)
-            # ignore non-matching chunks
             if sim <= 0.0:
                 continue
 
             rec_id = embeddings_store[idx]["record_id"]
             chunk_text = embeddings_store[idx]["chunk_text"]
 
-            # keep the BEST chunk per record (highest score)
             if rec_id not in results_by_record or sim > results_by_record[rec_id]["score"]:
                 results_by_record[rec_id] = {
                     "record_id": rec_id,
@@ -303,11 +368,10 @@ def search_records():
                     "snippet": chunk_text,
                 }
 
-        # 3) if nothing matched at all, return empty list
         if not results_by_record:
             return jsonify({"results": [], "total": 0, "page": page, "page_size": page_size}), 200
 
-        # 4) sort by score and take top_k
+        # sort by score
         scored_list = sorted(
             results_by_record.values(),
             key=lambda x: x["score"],
@@ -319,17 +383,20 @@ def search_records():
         end = start + page_size
         page_items = scored_list[start:end]
 
-
-        final_results = []
- 
+        # fetch only this user's records for those IDs
         record_ids = [item["record_id"] for item in page_items]
-        records = Record.query.filter(Record.id.in_(record_ids)).all()
+        records = Record.query.filter(
+            Record.id.in_(record_ids),
+            Record.user_id == user.id
+        ).all()
         records_by_id = {r.id: r for r in records}
 
+        final_results = []
         for item in page_items:
             rec = records_by_id.get(item["record_id"])
             if not rec:
                 continue
+
             snippet = item["snippet"]
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
@@ -348,7 +415,6 @@ def search_records():
             "page_size": page_size
         }), 200
 
-
     except Exception as e:
         print("Error in search_records:", e)
         return jsonify({"error": "Internal server error"}), 500
@@ -364,9 +430,11 @@ def get_record(record_id):
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
 
-    rec = Record.query.get(record_id)
+    rec = Record.query.filter_by(id=record_id, user_id=user.id).first()
     if not rec:
         return jsonify({"error": "Record not found"}), 404
+
+    summary = simple_summary(rec.full_text)
 
     return jsonify({
         "record": {
@@ -375,7 +443,7 @@ def get_record(record_id):
             "file_name": rec.file_name,
             "created_at": rec.created_at.isoformat(),
             "full_text": rec.full_text,
-            "summary": rec.summary,  # precomputed
+            "summary": summary, 
         }
     }), 200
 
@@ -388,7 +456,7 @@ def delete_record(record_id):
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
 
-    rec = Record.query.get(record_id)
+    rec = Record.query.filter_by(id=record_id, user_id=user.id).first()
     if not rec:
         return jsonify({"error": "Record not found"}), 404
 
@@ -408,7 +476,7 @@ def update_record(record_id):
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
 
-    rec = Record.query.get(record_id)
+    rec = Record.query.filter_by(id=record_id, user_id=user.id).first()
     if not rec:
         return jsonify({"error": "Record not found"}), 404
 
