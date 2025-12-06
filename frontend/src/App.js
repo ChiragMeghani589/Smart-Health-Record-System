@@ -343,7 +343,6 @@ function SearchPage({ token }) {
           >
             <strong>Patient ID:</strong> {r.patient_id} <br />
             <strong>File:</strong> {r.file_name} <br />
-            <strong>Score:</strong> {r.score} <br />
             <strong>Snippet:</strong> {r.snippet} <br />
             <button
               onClick={() => viewRecord(r.record_id)}

@@ -229,6 +229,8 @@ def upload_record():
 
 # ---------- API: Search records ----------
 
+from sklearn.metrics.pairwise import cosine_similarity
+
 @app.route("/api/search-records", methods=["POST"])
 def search_records():
     user = get_user_from_token(request)
@@ -238,57 +240,75 @@ def search_records():
     data = request.get_json(force=True)
     query = data.get("query", "").strip()
     top_k = int(data.get("top_k", 5))
-    filter_patient_id = data.get("patient_id", "").strip()
 
     if not query:
         return jsonify({"error": "Query is required"}), 400
 
-    global chunk_vectors, embeddings_store
+    global vectorizer, chunk_vectors, embeddings_store
 
-    if chunk_vectors is None or not embeddings_store:
+    # if nothing indexed yet
+    if vectorizer is None or chunk_vectors is None or not embeddings_store:
         return jsonify({"results": []}), 200
 
     try:
+        # 1) vectorize query
         query_vec = vectorizer.transform([query])
         sims = cosine_similarity(query_vec, chunk_vectors)[0]
 
-        scored = []
-        for idx, item in enumerate(embeddings_store):
+        # 2) keep only chunks with similarity > 0
+        results_by_record = {}  # record_id -> {score, snippet}
+
+        for idx, sim in enumerate(sims):
+            sim = float(sim)
+            # ignore non-matching chunks
+            if sim <= 0.0:
+                continue
+
+            rec_id = embeddings_store[idx]["record_id"]
+            chunk_text = embeddings_store[idx]["chunk_text"]
+
+            # keep the BEST chunk per record (highest score)
+            if rec_id not in results_by_record or sim > results_by_record[rec_id]["score"]:
+                results_by_record[rec_id] = {
+                    "record_id": rec_id,
+                    "score": sim,
+                    "snippet": chunk_text,
+                }
+
+        # 3) if nothing matched at all, return empty list
+        if not results_by_record:
+            return jsonify({"results": []}), 200
+
+        # 4) sort by score and take top_k
+        scored_list = sorted(
+            results_by_record.values(),
+            key=lambda x: x["score"],
+            reverse=True
+        )[:top_k]
+
+        # 5) build final response
+        final_results = []
+        for item in scored_list:
             rec = Record.query.get(item["record_id"])
             if not rec:
                 continue
-            if filter_patient_id and rec.patient_id != filter_patient_id:
-                continue
+            snippet = item["snippet"]
+            if len(snippet) > 300:
+                snippet = snippet[:300] + "..."
 
-            sim = float(sims[idx])
-            scored.append({
-                "record_id": item["record_id"],
-                "chunk_text": item["chunk_text"],
-                "score": sim
-            })
-
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        scored = scored[:top_k]
-
-        results = []
-        for s in scored:
-            rec = Record.query.get(s["record_id"])
-            if not rec:
-                continue
-            results.append({
+            final_results.append({
                 "record_id": rec.id,
                 "patient_id": rec.patient_id,
                 "file_name": rec.file_name,
-                "created_at": rec.created_at.isoformat(),
-                "score": round(s["score"], 4),
-                "snippet": s["chunk_text"][:300] + ("..." if len(s["chunk_text"]) > 300 else "")
+                "snippet": snippet,
             })
 
-        return jsonify({"results": results}), 200
+        return jsonify({"results": final_results}), 200
 
     except Exception as e:
         print("Error in search_records:", e)
         return jsonify({"error": "Internal server error"}), 500
+
 
 
 # ---------- API: Get full record + summary ----------
