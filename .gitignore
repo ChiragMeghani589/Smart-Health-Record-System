@@ -1,19 +1,94 @@
-# Python
+#################################
+# PYTHON BACKEND
+#################################
+
+# Virtual environment
 backend/venv/
+venv/
+.env/
+*.env
+
+# Python cache
 backend/__pycache__/
-backend/*.pyc
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
 
-# SQLite DB
-backend/app.db
+# SQLite DB (auto-generated, should not be tracked)
+backend/health_records.db
+backend/*.db
 
-# PDFs (if you store them)
+# TF-IDF index files if you ever store them
+backend/*.pkl
+backend/*.pickle
+
+# Uploaded files (PDFs)
 backend/uploads/
+backend/static/uploads/
+*.pdf
 
-# Node
+# Logs
+backend/*.log
+
+# IDE configs
+backend/.vscode/
+backend/.idea/
+
+#################################
+# NODE / REACT FRONTEND
+#################################
+
+# Node modules
 frontend/node_modules/
-frontend/build/
-frontend/.env
 
-# System
+# Build output
+frontend/build/
+frontend/dist/
+
+# Cache files
+frontend/.cache/
+frontend/.parcel-cache/
+frontend/.vite/
+
+# Environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Temporary files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor folders
+frontend/.vscode/
+frontend/.idea/
+
+#################################
+# SYSTEM FILES (Windows / Mac)
+#################################
+
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+#################################
+# MISC
+#################################
+
+# Backup files
+*.bak
+*.swp
+*.swo
+*.orig
+
+# Python egg/dist
+*.egg
+*.egg-info/
+dist/
+build/
+
