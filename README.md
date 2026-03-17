@@ -49,21 +49,24 @@ semantic search operations.
 
 ## Project Structure
 
-Smart-Health-Record-System 
-│ 
-├── frontend 
-│   ├── components  
-|   ├── pages 
-|   └── App.js 
-├── backend 
-│   ├── app.py 
-|   ├── search_engine.py 
-|   └──database.py 
-│ 
-├── database 
-|   └── health_records.db 
-│ 
+```text
+Smart-Health-Record-System/
+│
+├── frontend/
+│   ├── components/
+│   ├── pages/
+│   └── App.js
+│
+├── backend/
+│   ├── app.py
+│   ├── search_engine.py
+│   └── database.py
+│
+├── database/
+│   └── health_records.db
+│
 └── README.md
+```
 
 ## Installation
 
