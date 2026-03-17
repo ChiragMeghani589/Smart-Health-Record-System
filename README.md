@@ -49,15 +49,27 @@ semantic search operations.
 
 ## Project Structure
 
-Smart-Health-Record-System │ ├── frontend │ ├── components │ ├── pages │
-└── App.js │ ├── backend │ ├── app.py │ ├── search_engine.py │ └──
-database.py │ ├── database │ └── health_records.db │ └── README.md
+Smart-Health-Record-System 
+│ 
+├── frontend 
+│   ├── components  
+|   ├── pages 
+|   └── App.js 
+├── backend 
+│   ├── app.py 
+|   ├── search_engine.py 
+|   └──database.py 
+│ 
+├── database 
+|   └── health_records.db 
+│ 
+└── README.md
 
 ## Installation
 
 ### Clone the repository
 
-git clone https://github.com/yourusername/Smart-Health-Record-System.git
+git clone https://github.com/ChiragMeghani589/Smart-Health-Record-System.git
 cd Smart-Health-Record-System
 
 ### Install backend dependencies
