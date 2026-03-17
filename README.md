@@ -47,26 +47,6 @@ The frontend communicates with the Flask backend through RESTful APIs.\
 The backend processes requests, manages patient data, and performs
 semantic search operations.
 
-## Project Structure
-
-```text
-Smart-Health-Record-System/
-│
-├── frontend/
-│   ├── components/
-│   ├── pages/
-│   └── App.js
-│
-├── backend/
-│   ├── app.py
-│   ├── search_engine.py
-│   └── database.py
-│
-├── database/
-│   └── health_records.db
-│
-└── README.md
-```
 
 ## Installation
 
